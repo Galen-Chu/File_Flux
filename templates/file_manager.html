@@ -18,12 +18,15 @@
             <div class="flex justify-between items-center">
                 <div>
                     <h1 class="text-3xl font-bold">FileFlux File Manager</h1>
-                    <p class="text-purple-200 mt-1">Manage files across local storage and AWS S3</p>
+                    <p class="text-purple-200 mt-1">Manage files across local storage, AWS S3, and Google Drive</p>
                 </div>
                 <div class="flex items-center space-x-4">
                     <div class="flex space-x-3">
                         <button onclick="showUploadModal()" class="bg-white text-purple-700 px-4 py-2 rounded-lg font-semibold hover:bg-purple-50 transition">
                             Upload
+                        </button>
+                        <button onclick="showCreateFolderModal()" class="bg-purple-800 px-4 py-2 rounded-lg font-semibold hover:bg-purple-900 transition ${currentSource === 'googledrive' ? '' : 'hidden'}" id="create-folder-btn">
+                            Create Folder
                         </button>
                         <button onclick="handleRename()" class="bg-purple-800 px-4 py-2 rounded-lg font-semibold hover:bg-purple-900 transition">
                             Rename Selected
@@ -65,6 +68,9 @@
                     </button>
                     <button onclick="loadFiles('s3')" id="tab-s3" class="tab-button border-b-2 border-transparent text-gray-500 hover:text-gray-700 py-2 px-1 font-medium">
                         AWS S3
+                    </button>
+                    <button onclick="loadFiles('googledrive')" id="tab-googledrive" class="tab-button border-b-2 border-transparent text-gray-500 hover:text-gray-700 py-2 px-1 font-medium">
+                        Google Drive
                     </button>
                 </nav>
             </div>
@@ -115,7 +121,7 @@
     <div id="upload-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
         <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
             <div class="mt-3">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">Upload File to S3</h3>
+                <h3 class="text-lg font-medium text-gray-900 mb-4" id="upload-modal-title">Upload File</h3>
                 <form id="upload-form" onsubmit="handleUpload(event)">
                     <div class="mb-4">
                         <label class="block text-sm font-medium text-gray-700 mb-2">Select File</label>
@@ -125,12 +131,43 @@
                         <label class="block text-sm font-medium text-gray-700 mb-2">Destination Path (optional)</label>
                         <input type="text" id="upload-dest" placeholder="Leave empty for original filename" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500">
                     </div>
+                    <div class="mb-4" id="folder-id-group" style="display: none;">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Parent Folder ID (optional)</label>
+                        <input type="text" id="upload-folder-id" placeholder="Google Drive folder ID" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
                     <div class="flex justify-end space-x-3">
                         <button type="button" onclick="hideUploadModal()" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
                             Cancel
                         </button>
                         <button type="submit" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">
                             Upload
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Folder Modal -->
+    <div id="create-folder-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Create Folder in Google Drive</h3>
+                <form id="create-folder-form" onsubmit="handleCreateFolder(event)">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Folder Name</label>
+                        <input type="text" id="folder-name" required placeholder="New Folder" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Parent Folder ID (optional)</label>
+                        <input type="text" id="parent-folder-id" placeholder="Leave empty for root folder" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="hideCreateFolderModal()" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
+                            Cancel
+                        </button>
+                        <button type="submit" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">
+                            Create Folder
                         </button>
                     </div>
                 </form>
@@ -254,6 +291,14 @@
             currentSource = source;
             updateTabStyles(source);
 
+            // Update Create Folder button visibility
+            const createFolderBtn = document.getElementById('create-folder-btn');
+            if (source === 'googledrive') {
+                createFolderBtn.classList.remove('hidden');
+            } else {
+                createFolderBtn.classList.add('hidden');
+            }
+
             const loadingState = document.getElementById('loading-state');
             const emptyState = document.getElementById('empty-state');
             const tableBody = document.getElementById('file-table-body');
@@ -263,16 +308,27 @@
             tableBody.innerHTML = '';
 
             try {
-                let url = '/api/files/';
-                if (source) {
-                    url += `?source=${source}`;
+                let url;
+                let data;
+
+                if (source === 'googledrive') {
+                    // Use cloud API for Google Drive
+                    url = '/api/cloud/files/?provider=googledrive&page_size=100';
+                    const response = await fetch(url);
+                    data = await response.json();
+                    currentFiles = data.files || [];
+                } else {
+                    // Use regular files API for local and S3
+                    url = '/api/files/';
+                    if (source) {
+                        url += `?source=${source}`;
+                    }
+                    const response = await fetch(url);
+                    data = await response.json();
+                    currentFiles = data.files || [];
                 }
 
-                const response = await fetch(url);
-                const data = await response.json();
-
                 loadingState.classList.add('hidden');
-                currentFiles = data.files || [];
 
                 if (currentFiles.length === 0) {
                     emptyState.classList.remove('hidden');
@@ -297,36 +353,42 @@
                 const row = document.createElement('tr');
                 row.className = 'hover:bg-gray-50';
 
-                const checkboxId = `file-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
-                const isSelected = selectedFiles.has(`${file.path}|${file.source}`);
+                // For Google Drive, use file.id; for local/S3 use file.path
+                const fileId = file.id || file.path;
+                const checkboxId = `file-${fileId.replace(/[^a-zA-Z0-9]/g, '-')}`;
+                const isSelected = selectedFiles.has(`${fileId}|${file.source}`);
 
                 row.innerHTML = `
                     <td class="px-6 py-4">
                         <input type="checkbox" id="${checkboxId}"
-                            data-path="${file.path}" data-source="${file.source}"
+                            data-id="${fileId}" data-source="${file.source}"
                             ${isSelected ? 'checked' : ''}
-                            onchange="toggleFileSelection('${file.path}', '${file.source}')"
+                            onchange="toggleFileSelection('${fileId}', '${file.source}')"
                             class="w-4 h-4 rounded border-gray-300">
                     </td>
                     <td class="px-6 py-4">
                         <div class="flex items-center">
-                            ${file.is_directory ?
+                            ${file.type === 'folder' || file.is_directory ?
                                 '<svg class="w-5 h-5 text-yellow-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>' :
                                 '<svg class="w-5 h-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"></path></svg>'
                             }
                             <span class="text-sm font-medium text-gray-900">${escapeHtml(file.name)}</span>
                         </div>
                     </td>
-                    <td class="px-6 py-4 text-sm text-gray-500">${formatFileSize(file.size)}</td>
-                    <td class="px-6 py-4 text-sm text-gray-500">${formatDate(file.modified_time)}</td>
+                    <td class="px-6 py-4 text-sm text-gray-500">${formatFileSize(file.size || 0)}</td>
+                    <td class="px-6 py-4 text-sm text-gray-500">${formatDate(file.modified_time || file.modified)}</td>
                     <td class="px-6 py-4">
-                        <span class="px-2 py-1 text-xs font-semibold rounded-full ${file.source === 'local' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">
-                            ${file.source.toUpperCase()}
+                        <span class="px-2 py-1 text-xs font-semibold rounded-full ${
+                            file.source === 'local' ? 'bg-blue-100 text-blue-800' :
+                            file.source === 's3' ? 'bg-green-100 text-green-800' :
+                            'bg-yellow-100 text-yellow-800'
+                        }">
+                            ${file.source === 'googledrive' ? 'GOOGLE DRIVE' : file.source.toUpperCase()}
                         </span>
                     </td>
                     <td class="px-6 py-4 text-sm">
-                        ${file.source === 's3' && !file.is_directory ?
-                            `<button onclick="handleDownload('${file.path}')" class="text-purple-600 hover:text-purple-900 font-medium">Download</button>` :
+                        ${(file.source === 's3' || file.source === 'googledrive') && (file.type !== 'folder' && !file.is_directory) ?
+                            `<button onclick="handleDownload('${fileId}', '${file.source}')" class="text-purple-600 hover:text-purple-900 font-medium">Download</button>` :
                             '<span class="text-gray-400">-</span>'
                         }
                     </td>
@@ -395,7 +457,20 @@
 
         // Show upload modal
         function showUploadModal() {
-            document.getElementById('upload-modal').classList.remove('hidden');
+            const modal = document.getElementById('upload-modal');
+            const title = document.getElementById('upload-modal-title');
+            const folderIdGroup = document.getElementById('folder-id-group');
+
+            // Update modal based on current source
+            if (currentSource === 'googledrive') {
+                title.textContent = 'Upload File to Google Drive';
+                folderIdGroup.style.display = 'block';
+            } else {
+                title.textContent = 'Upload File to S3';
+                folderIdGroup.style.display = 'none';
+            }
+
+            modal.classList.remove('hidden');
         }
 
         // Hide upload modal
@@ -404,33 +479,110 @@
             document.getElementById('upload-form').reset();
         }
 
+        // Show create folder modal
+        function showCreateFolderModal() {
+            document.getElementById('create-folder-modal').classList.remove('hidden');
+        }
+
+        // Hide create folder modal
+        function hideCreateFolderModal() {
+            document.getElementById('create-folder-modal').classList.add('hidden');
+            document.getElementById('create-folder-form').reset();
+        }
+
+        // Handle create folder
+        async function handleCreateFolder(event) {
+            event.preventDefault();
+
+            const folderName = document.getElementById('folder-name').value;
+            const parentFolderId = document.getElementById('parent-folder-id').value;
+
+            try {
+                const requestData = {
+                    name: folderName,
+                    provider: 'googledrive'
+                };
+
+                if (parentFolderId) {
+                    requestData.parent_folder_id = parentFolderId;
+                }
+
+                const response = await fetch('/api/cloud/create-folder/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    hideCreateFolderModal();
+                    showSuccess(`Folder "${data.name}" created successfully!`);
+                    loadFiles(currentSource);
+                } else {
+                    showError(data.error || 'Failed to create folder');
+                }
+            } catch (error) {
+                showError('Failed to create folder: ' + error.message);
+            }
+        }
+
         // Handle upload
         async function handleUpload(event) {
             event.preventDefault();
 
             const fileInput = document.getElementById('upload-file');
             const destInput = document.getElementById('upload-dest');
-
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            if (destInput.value) {
-                formData.append('dest_path', destInput.value);
-            }
+            const folderIdInput = document.getElementById('upload-folder-id');
 
             try {
-                const response = await fetch('/api/files/upload/', {
-                    method: 'POST',
-                    body: formData
-                });
+                if (currentSource === 'googledrive') {
+                    // Upload to Google Drive
+                    const formData = new FormData();
+                    formData.append('file', fileInput.files[0]);
+                    formData.append('provider', 'googledrive');
+                    if (folderIdInput.value) {
+                        formData.append('parent_folder_id', folderIdInput.value);
+                    }
 
-                const data = await response.json();
+                    const response = await fetch('/api/cloud/upload/', {
+                        method: 'POST',
+                        body: formData
+                    });
 
-                if (response.ok) {
-                    hideUploadModal();
-                    showSuccess('File uploaded successfully!');
-                    loadFiles(currentSource);
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        hideUploadModal();
+                        showSuccess('File uploaded to Google Drive successfully!');
+                        loadFiles(currentSource);
+                    } else {
+                        showError(data.error || 'Upload failed');
+                    }
                 } else {
-                    showError(data.error || 'Upload failed');
+                    // Upload to S3 (existing logic)
+                    const formData = new FormData();
+                    formData.append('file', fileInput.files[0]);
+                    if (destInput.value) {
+                        formData.append('dest_path', destInput.value);
+                    }
+
+                    const response = await fetch('/api/files/upload/', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        hideUploadModal();
+                        showSuccess('File uploaded successfully!');
+                        loadFiles(currentSource);
+                    } else {
+                        showError(data.error || 'Upload failed');
+                    }
                 }
             } catch (error) {
                 showError('Upload failed: ' + error.message);
@@ -438,25 +590,69 @@
         }
 
         // Handle download
-        async function handleDownload(path) {
+        async function handleDownload(fileId, source) {
             try {
-                const response = await fetch('/api/files/download/', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        source_path: path
-                    })
-                });
+                if (source === 'googledrive') {
+                    // Download from Google Drive
+                    const response = await fetch('/api/cloud/download/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            file_id: fileId,
+                            provider: 'googledrive'
+                        })
+                    });
 
-                const data = await response.json();
+                    if (response.ok) {
+                        // Get the blob from the response
+                        const blob = await response.blob();
+                        const contentDisposition = response.headers.get('Content-Disposition');
+                        let filename = 'download';
 
-                if (response.ok) {
-                    showSuccess(`File downloaded successfully to ${data.dest_path}`);
-                    loadFiles(currentSource);
+                        if (contentDisposition) {
+                            const filenameMatch = contentDisposition.match(/filename="?(.+?)"?(;|$)/);
+                            if (filenameMatch) {
+                                filename = filenameMatch[1];
+                            }
+                        }
+
+                        // Create download link
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+
+                        showSuccess('File downloaded successfully!');
+                    } else {
+                        const data = await response.json();
+                        showError(data.error || 'Download failed');
+                    }
                 } else {
-                    showError(data.error || 'Download failed');
+                    // Download from S3 (existing logic)
+                    const response = await fetch('/api/files/download/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            source_path: fileId
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        showSuccess(`File downloaded successfully to ${data.dest_path}`);
+                        loadFiles(currentSource);
+                    } else {
+                        showError(data.error || 'Download failed');
+                    }
                 }
             } catch (error) {
                 showError('Download failed: ' + error.message);
@@ -467,6 +663,20 @@
         function handleRename() {
             if (selectedFiles.size === 0) {
                 showError('Please select files to rename');
+                return;
+            }
+
+            // Check if any Google Drive files are selected
+            let hasGoogleDriveFiles = false;
+            selectedFiles.forEach(key => {
+                const [, source] = key.split('|');
+                if (source === 'googledrive') {
+                    hasGoogleDriveFiles = true;
+                }
+            });
+
+            if (hasGoogleDriveFiles) {
+                showError('Renaming Google Drive files is not yet supported');
                 return;
             }
 
@@ -603,38 +813,55 @@
             // Group files by source
             const filesBySource = {};
             selectedFiles.forEach(key => {
-                const [path, source] = key.split('|');
+                const [fileId, source] = key.split('|');
                 if (!filesBySource[source]) {
                     filesBySource[source] = [];
                 }
-                filesBySource[source].push(path);
+                filesBySource[source].push(fileId);
             });
 
             // Perform delete for each source
             for (const [source, files] of Object.entries(filesBySource)) {
                 try {
-                    const response = await fetch('/api/files/delete/', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            files: files,
-                            source: source
-                        })
-                    });
+                    if (source === 'googledrive') {
+                        // Delete from Google Drive
+                        for (const fileId of files) {
+                            const response = await fetch(`/api/cloud/files/${fileId}/?provider=googledrive`, {
+                                method: 'DELETE'
+                            });
 
-                    const data = await response.json();
+                            const data = await response.json();
 
-                    if (response.ok) {
-                        if (data.failed.length > 0) {
-                            showError(`${data.failed.length} file(s) failed to delete`);
+                            if (!response.ok) {
+                                showError(data.error || 'Delete failed');
+                            }
                         }
-                        if (data.success.length > 0) {
-                            showSuccess(`${data.success.length} file(s) deleted successfully`);
-                        }
+                        showSuccess(`${files.length} file(s) deleted from Google Drive`);
                     } else {
-                        showError(data.error || 'Delete failed');
+                        // Delete from local/S3
+                        const response = await fetch('/api/files/delete/', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                files: files,
+                                source: source
+                            })
+                        });
+
+                        const data = await response.json();
+
+                        if (response.ok) {
+                            if (data.failed.length > 0) {
+                                showError(`${data.failed.length} file(s) failed to delete`);
+                            }
+                            if (data.success.length > 0) {
+                                showSuccess(`${data.success.length} file(s) deleted successfully`);
+                            }
+                        } else {
+                            showError(data.error || 'Delete failed');
+                        }
                     }
                 } catch (error) {
                     showError('Delete failed: ' + error.message);
