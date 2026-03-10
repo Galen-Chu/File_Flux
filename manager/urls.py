@@ -7,6 +7,7 @@ from .cloud_views import (
     disconnect_drive,
     cloud_status
 )
+from .oauth_views import oauth_callback
 
 app_name = 'manager'
 
@@ -21,4 +22,6 @@ urlpatterns = [
     path('cloud/connect/googledrive/', connect_googledrive, name='connect_googledrive'),
     path('cloud/disconnect/<str:provider>/', disconnect_drive, name='disconnect_drive'),
     path('cloud/status/', cloud_status, name='cloud_status'),
+    # OAuth callback (unified for all providers)
+    path('oauth/callback/', oauth_callback, name='oauth_callback'),
 ]

@@ -2,3 +2,4 @@ Django==6.0.2
 djangorestframework==3.16.1
 boto3==1.42.59
 python-dotenv==1.2.2
+requests==2.31.0

@@ -61,10 +61,12 @@ def profile_view(request):
     from .models import CloudStorageToken
 
     tokens = CloudStorageToken.objects.filter(user=request.user)
+    connected_providers = set(tokens.values_list('provider', flat=True))
 
     context = {
         'user': request.user,
         'tokens': tokens,
+        'connected_providers': connected_providers,
     }
 
     return render(request, 'registration/profile.html', context)

@@ -1,11 +1,13 @@
 """
 Cloud drive OAuth views
 """
-from django.shortcuts import render, redirect
+from django.shortcuts import redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
+from django.conf import settings
+from urllib.parse import urlencode
 
 from .services.cloud_manager import CloudDriveManager
 from .models import CloudStorageToken
@@ -15,31 +17,26 @@ from .models import CloudStorageToken
 def connect_onedrive(request):
     """
     Initiate OneDrive OAuth connection
+    Redirects to Microsoft login page
     """
     try:
-        auth_url = CloudDriveManager.get_authorization_url('onedrive')
+        # Build Microsoft OAuth URL
+        params = {
+            'client_id': settings.MS_CLIENT_ID,
+            'response_type': 'code',
+            'redirect_uri': settings.OAUTH_REDIRECT_URI,
+            'scope': 'files.readwrite.all offline_access',
+            'response_mode': 'query',
+            'state': 'onedrive',  # Identify provider in callback
+        }
 
-        # For demo purposes, simulate successful connection
-        # In production, this would redirect to actual OAuth URL
-        messages.info(request, 'OneDrive integration requires Microsoft Azure app registration. See documentation for setup instructions.')
+        auth_url = f"https://login.microsoftonline.com/{settings.MS_TENANT_ID}/oauth2/v2.0/authorize?{urlencode(params)}"
 
-        # Simulate connection for demo
-        if request.GET.get('demo') == 'true':
-            success = CloudDriveManager.connect_drive(
-                user=request.user,
-                provider='onedrive',
-                access_token='demo_access_token',
-                refresh_token='demo_refresh_token',
-                expires_in=3600
-            )
-            if success:
-                messages.success(request, 'OneDrive connected successfully (demo mode)!')
-                return redirect('manager:profile')
-
-        return redirect('manager:profile')
+        # Redirect user to Microsoft login
+        return redirect(auth_url)
 
     except Exception as e:
-        messages.error(request, f'Failed to connect OneDrive: {str(e)}')
+        messages.error(request, f'Failed to initiate OneDrive connection: {str(e)}')
         return redirect('manager:profile')
 
 
@@ -47,31 +44,27 @@ def connect_onedrive(request):
 def connect_googledrive(request):
     """
     Initiate Google Drive OAuth connection
+    Redirects to Google login page
     """
     try:
-        auth_url = CloudDriveManager.get_authorization_url('googledrive')
+        # Build Google OAuth URL
+        params = {
+            'client_id': settings.GOOGLE_CLIENT_ID,
+            'redirect_uri': settings.OAUTH_REDIRECT_URI,
+            'response_type': 'code',
+            'scope': 'https://www.googleapis.com/auth/drive.file',
+            'access_type': 'offline',
+            'prompt': 'consent',
+            'state': 'googledrive',  # Identify provider in callback
+        }
 
-        # For demo purposes, simulate successful connection
-        # In production, this would redirect to actual OAuth URL
-        messages.info(request, 'Google Drive integration requires Google Cloud project setup. See documentation for setup instructions.')
+        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
 
-        # Simulate connection for demo
-        if request.GET.get('demo') == 'true':
-            success = CloudDriveManager.connect_drive(
-                user=request.user,
-                provider='googledrive',
-                access_token='demo_access_token',
-                refresh_token='demo_refresh_token',
-                expires_in=3600
-            )
-            if success:
-                messages.success(request, 'Google Drive connected successfully (demo mode)!')
-                return redirect('manager:profile')
-
-        return redirect('manager:profile')
+        # Redirect user to Google login
+        return redirect(auth_url)
 
     except Exception as e:
-        messages.error(request, f'Failed to connect Google Drive: {str(e)}')
+        messages.error(request, f'Failed to initiate Google Drive connection: {str(e)}')
         return redirect('manager:profile')
 
 
