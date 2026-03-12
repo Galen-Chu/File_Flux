@@ -107,6 +107,9 @@
                 <tbody id="file-table-body" class="bg-white divide-y divide-gray-200">
                     <!-- Files will be loaded here -->
                 </tbody>
+                <tfoot id="file-table-foot">
+                    <!-- Loading indicator will be added here -->
+                </tfoot>
             </table>
 
             <!-- Loading State -->
@@ -327,23 +330,35 @@
         let currentFiles = [];
         let currentFolderId = null; // Track current folder for Google Drive
         let folderPath = []; // Breadcrumb path: [{ id: 'folder_id', name: 'Folder Name' }]
+        let nextPageToken = null; // For pagination
+        let isLoadingMore = false; // Prevent duplicate scroll triggers
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
             loadFiles(null);
+            setupInfiniteScroll();
         });
 
         // Load files from API
-        async function loadFiles(source, folderId = null) {
+        async function loadFiles(source, folderId = null, appendMode = false) {
             // Reset folder navigation when switching sources
-            if (source !== currentSource) {
+            if (source !== currentSource && !appendMode) {
                 folderPath = [];
+                nextPageToken = null;
+            }
+
+            // Reset pagination when not in append mode
+            if (!appendMode) {
+                nextPageToken = null;
             }
 
             currentSource = source;
             currentFolderId = folderId;
-            updateTabStyles(source);
-            updateBreadcrumb();
+
+            if (!appendMode) {
+                updateTabStyles(source);
+                updateBreadcrumb();
+            }
 
             // Update Create Folder button visibility
             const createFolderBtn = document.getElementById('create-folder-btn');
@@ -356,10 +371,17 @@
             const loadingState = document.getElementById('loading-state');
             const emptyState = document.getElementById('empty-state');
             const tableBody = document.getElementById('file-table-body');
+            const loadMoreIndicator = document.getElementById('load-more-indicator');
 
-            loadingState.classList.remove('hidden');
-            emptyState.classList.add('hidden');
-            tableBody.innerHTML = '';
+            if (!appendMode) {
+                loadingState.classList.remove('hidden');
+                emptyState.classList.add('hidden');
+                tableBody.innerHTML = '';
+            } else {
+                if (loadMoreIndicator) {
+                    loadMoreIndicator.classList.remove('hidden');
+                }
+            }
 
             try {
                 let url;
@@ -367,13 +389,24 @@
 
                 if (source === 'googledrive') {
                     // Use cloud API for Google Drive
-                    url = '/api/cloud/files/?provider=googledrive&page_size=100';
+                    url = '/api/cloud/files/?provider=googledrive&page_size=50';
                     if (folderId) {
                         url += `&folder_id=${folderId}`;
                     }
+                    if (appendMode && nextPageToken) {
+                        url += `&page_token=${nextPageToken}`;
+                    }
                     const response = await fetch(url);
                     data = await response.json();
-                    currentFiles = data.files || [];
+
+                    // Store next page token for pagination
+                    nextPageToken = data.next_page_token || null;
+
+                    if (appendMode) {
+                        currentFiles = [...currentFiles, ...(data.files || [])];
+                    } else {
+                        currentFiles = data.files || [];
+                    }
                 } else {
                     // Use regular files API for local and S3
                     url = '/api/files/';
@@ -382,29 +415,106 @@
                     }
                     const response = await fetch(url);
                     data = await response.json();
-                    currentFiles = data.files || [];
+
+                    // Local/S3 doesn't support pagination yet
+                    nextPageToken = null;
+
+                    if (appendMode) {
+                        currentFiles = [...currentFiles, ...(data.files || [])];
+                    } else {
+                        currentFiles = data.files || [];
+                    }
                 }
 
-                loadingState.classList.add('hidden');
+                if (!appendMode) {
+                    loadingState.classList.add('hidden');
+                } else {
+                    if (loadMoreIndicator) {
+                        loadMoreIndicator.classList.add('hidden');
+                    }
+                    isLoadingMore = false;
+                }
 
-                if (currentFiles.length === 0) {
+                if (currentFiles.length === 0 && !appendMode) {
                     emptyState.classList.remove('hidden');
                 } else {
-                    renderFileTable(currentFiles);
+                    if (!appendMode) {
+                        emptyState.classList.add('hidden');
+                    }
+                    renderFileTable(currentFiles, appendMode);
                 }
 
-                selectedFiles.clear();
-                updateSelectionInfo();
+                if (!appendMode) {
+                    selectedFiles.clear();
+                    updateSelectionInfo();
+                }
             } catch (error) {
-                loadingState.classList.add('hidden');
+                if (!appendMode) {
+                    loadingState.classList.add('hidden');
+                } else {
+                    isLoadingMore = false;
+                }
                 showError('Failed to load files: ' + error.message);
             }
         }
 
+        // Setup infinite scroll
+        function setupInfiniteScroll() {
+            window.addEventListener('scroll', () => {
+                // Only enable for Google Drive source
+                if (currentSource !== 'googledrive' || !nextPageToken || isLoadingMore) {
+                    return;
+                }
+
+                // Check if scrolled near bottom
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                const scrollHeight = document.documentElement.scrollHeight;
+                const clientHeight = document.documentElement.clientHeight;
+
+                if (scrollTop + clientHeight >= scrollHeight - 100) {
+                    // Load more files
+                    loadMoreFiles();
+                }
+            });
+        }
+
+        // Load more files (pagination)
+        async function loadMoreFiles() {
+            if (!nextPageToken || isLoadingMore) {
+                return;
+            }
+
+            isLoadingMore = true;
+
+            // Show or create loading indicator
+            let loadMoreIndicator = document.getElementById('load-more-indicator');
+            if (!loadMoreIndicator) {
+                loadMoreIndicator = document.createElement('tr');
+                loadMoreIndicator.id = 'load-more-indicator';
+                loadMoreIndicator.innerHTML = `
+                    <td colspan="6" class="px-6 py-4 text-center text-gray-500">
+                        <svg class="animate-spin inline w-5 h-5 text-purple-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="ml-2">Loading more files...</span>
+                    </td>
+                `;
+                document.getElementById('file-table-body').appendChild(loadMoreIndicator);
+            }
+            loadMoreIndicator.classList.remove('hidden');
+
+            // Load next page
+            await loadFiles(currentSource, currentFolderId, true);
+        }
+
         // Render file table
-        function renderFileTable(files) {
+        function renderFileTable(files, appendMode = false) {
             const tableBody = document.getElementById('file-table-body');
-            tableBody.innerHTML = '';
+
+            if (!appendMode) {
+                tableBody.innerHTML = '';
+            }
 
             files.forEach(file => {
                 const row = document.createElement('tr');
