@@ -786,20 +786,7 @@
                 return;
             }
 
-            // Check if any Google Drive files are selected
-            let hasGoogleDriveFiles = false;
-            selectedFiles.forEach(key => {
-                const [, source] = key.split('|');
-                if (source === 'googledrive') {
-                    hasGoogleDriveFiles = true;
-                }
-            });
-
-            if (hasGoogleDriveFiles) {
-                showError('Renaming Google Drive files is not yet supported');
-                return;
-            }
-
+            // Note: Google Drive rename is now supported!
             document.getElementById('rename-modal').classList.remove('hidden');
         }
 
@@ -878,28 +865,132 @@
             // Perform rename for each source
             for (const [source, files] of Object.entries(filesBySource)) {
                 try {
-                    requestData.files = files;
-                    requestData.source = source;
+                    if (source === 'googledrive') {
+                        // Handle Google Drive files individually
+                        let successCount = 0;
+                        let failCount = 0;
 
-                    const response = await fetch('/api/files/rename/', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(requestData)
-                    });
+                        for (const fileId of files) {
+                            // Get current file name
+                            const file = currentFiles.find(f => (f.id || f.path) === fileId);
+                            if (!file) continue;
 
-                    const data = await response.json();
+                            // Calculate new name based on mode
+                            let newName = file.name;
 
-                    if (response.ok) {
-                        if (data.failed.length > 0) {
-                            showError(`${data.failed.length} file(s) failed to rename`);
+                            if (mode === 'replace') {
+                                const findText = document.getElementById('find-text').value;
+                                let replaceText = document.getElementById('replace-text').value;
+                                const caseSensitive = document.getElementById('case-sensitive').checked;
+                                const useRegex = document.getElementById('use-regex').checked;
+                                const replaceAll = document.getElementById('replace-all').checked;
+
+                                if (useRegex) {
+                                    try {
+                                        const flags = caseSensitive ? 'g' : 'gi';
+                                        const regex = new RegExp(findText, replaceAll ? flags : flags.replace('g', ''));
+                                        newName = file.name.replace(regex, replaceText);
+                                    } catch (e) {
+                                        showError(`Invalid regex pattern: ${e.message}`);
+                                        return;
+                                    }
+                                } else {
+                                    if (replaceAll) {
+                                        const flags = caseSensitive ? 'g' : 'gi';
+                                        newName = file.name.split(findText).join(replaceText);
+                                    } else {
+                                        const flags = caseSensitive ? '' : 'i';
+                                        newName = file.name.replace(new RegExp(findText, flags), replaceText);
+                                    }
+                                }
+                            } else {
+                                // Prefix or suffix mode
+                                const text = document.getElementById('rename-text').value;
+
+                                // Split name and extension
+                                const lastDotIndex = file.name.lastIndexOf('.');
+                                let baseName, extension;
+                                if (lastDotIndex > 0) {
+                                    baseName = file.name.substring(0, lastDotIndex);
+                                    extension = file.name.substring(lastDotIndex);
+                                } else {
+                                    baseName = file.name;
+                                    extension = '';
+                                }
+
+                                if (mode === 'prefix') {
+                                    newName = text + baseName + extension;
+                                } else {
+                                    newName = baseName + text + extension;
+                                }
+                            }
+
+                            // Add sequence if requested
+                            if (addSequence) {
+                                const index = files.indexOf(fileId);
+                                const sequenceNum = startNumber + index;
+                                const paddedNum = String(sequenceNum).padStart(3, '0');
+
+                                const lastDotIndex = newName.lastIndexOf('.');
+                                if (lastDotIndex > 0) {
+                                    newName = newName.substring(0, lastDotIndex) + '_' + paddedNum + newName.substring(lastDotIndex);
+                                } else {
+                                    newName = newName + '_' + paddedNum;
+                                }
+                            }
+
+                            // Call Google Drive rename API
+                            const response = await fetch(`/api/cloud/files/${fileId}/rename/`, {
+                                method: 'PATCH',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    new_name: newName,
+                                    provider: 'googledrive'
+                                })
+                            });
+
+                            if (response.ok) {
+                                successCount++;
+                            } else {
+                                failCount++;
+                                const data = await response.json();
+                                console.error('Rename failed:', data.error);
+                            }
                         }
-                        if (data.success.length > 0) {
-                            showSuccess(`${data.success.length} file(s) renamed successfully`);
+
+                        if (failCount > 0) {
+                            showError(`${failCount} file(s) failed to rename`);
+                        }
+                        if (successCount > 0) {
+                            showSuccess(`${successCount} file(s) renamed successfully`);
                         }
                     } else {
-                        showError(data.error || 'Rename failed');
+                        // Handle local/S3 files with existing API
+                        requestData.files = files;
+                        requestData.source = source;
+
+                        const response = await fetch('/api/files/rename/', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(requestData)
+                        });
+
+                        const data = await response.json();
+
+                        if (response.ok) {
+                            if (data.failed.length > 0) {
+                                showError(`${data.failed.length} file(s) failed to rename`);
+                            }
+                            if (data.success.length > 0) {
+                                showSuccess(`${data.success.length} file(s) renamed successfully`);
+                            }
+                        } else {
+                            showError(data.error || 'Rename failed');
+                        }
                     }
                 } catch (error) {
                     showError('Rename failed: ' + error.message);

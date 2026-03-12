@@ -407,3 +407,51 @@ class GoogleDriveService:
 
         except Exception as e:
             return {'success': False, 'error': f'Error deleting file: {str(e)}'}
+
+    def rename_file(self, file_id, new_name):
+        """
+        Rename file in Google Drive
+
+        Args:
+            file_id: Google Drive file ID
+            new_name: New name for the file
+
+        Returns:
+            dict: Updated file metadata or error
+        """
+        if not self._refresh_token_if_needed():
+            return {'error': 'Token expired and refresh failed'}
+
+        try:
+            metadata = {'name': new_name}
+
+            response = requests.patch(
+                f'{self.BASE_URL}/files/{file_id}',
+                headers=self._get_headers(),
+                json=metadata,
+                params={'fields': 'id, name, mimeType, size, modifiedTime, parents, webViewLink'}
+            )
+
+            if response.status_code == 404:
+                return {'error': 'File not found'}
+
+            if response.status_code != 200:
+                return {'error': f'Rename failed: {response.text}'}
+
+            file = response.json()
+
+            return {
+                'id': file['id'],
+                'name': file['name'],
+                'type': 'folder' if file['mimeType'] == 'application/vnd.google-apps.folder' else 'file',
+                'mime_type': file.get('mimeType', ''),
+                'size': int(file.get('size', 0)),
+                'modified_time': file.get('modifiedTime', ''),
+                'parents': file.get('parents', []),
+                'web_view_link': file.get('webViewLink', ''),
+                'source': 'googledrive',
+                'error': None
+            }
+
+        except Exception as e:
+            return {'error': f'Error renaming file: {str(e)}'}

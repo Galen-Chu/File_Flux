@@ -333,3 +333,58 @@ class CloudDriveViewSet(viewsets.ViewSet):
                 {'error': f'Provider {provider} not yet supported'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+    @action(detail=False, methods=['patch'], url_path='files/(?P<file_id>[^/.]+)/rename')
+    def rename_file(self, request, file_id=None):
+        """
+        Rename file in cloud drive
+
+        Request body (JSON):
+            - new_name: new filename
+            - provider: 'googledrive' or 'onedrive'
+        """
+        provider = request.data.get('provider', 'googledrive')
+        new_name = request.data.get('new_name')
+
+        if not new_name:
+            return Response(
+                {'error': 'new_name is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            token = CloudStorageToken.objects.get(
+                user=request.user,
+                provider=provider
+            )
+        except CloudStorageToken.DoesNotExist:
+            return Response(
+                {'error': f'{provider} is not connected'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if provider == 'googledrive':
+            service = GoogleDriveService(token)
+            result = service.rename_file(file_id, new_name)
+
+            if result.get('error'):
+                return Response(
+                    {'error': result['error']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Log the operation
+            FileOperation.objects.create(
+                operation='RENAME',
+                source=provider,
+                file_path=result['name'],
+                success=True
+            )
+
+            return Response(result)
+
+        else:
+            return Response(
+                {'error': f'Provider {provider} not yet supported'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
